@@ -31,10 +31,10 @@ instance Enum   StereoidKey where
 
 
 instance IndexKey StereoidKey where
-    toKey (AlbumTitle x)      = BSKey $ ((E.encodeUtf8 x) :: B.ByteString)
-    toKey (AlbumSortTitle x)  = BSKey $ ((E.encodeUtf8 x) :: B.ByteString)
-    toKey (AlbumArtist x)     = BSKey $ ((E.encodeUtf8 x) :: B.ByteString)
-    toKey (AlbumSortArtist x) = BSKey $ ((E.encodeUtf8 x) :: B.ByteString)
+    toKey (AlbumTitle x)      = BSKey $ E.encodeUtf8 x
+    toKey (AlbumSortTitle x)  = BSKey $ E.encodeUtf8 x
+    toKey (AlbumArtist x)     = BSKey $ E.encodeUtf8 x
+    toKey (AlbumSortArtist x) = BSKey $ E.encodeUtf8 x
 
 data SdbRecord = Album
                     { _id :: Int

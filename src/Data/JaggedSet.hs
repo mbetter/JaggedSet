@@ -292,6 +292,15 @@ updateUnsafe ix f query
                           , indicies = V.accum
                                          (foldl'
                                            (\m k-> case m of
+                                                     IntMapIndex m' -> IntMapIndex $ IM.update
+                                                                                         (\is-> let is' = IS.delete i is
+                                                                                                in if IS.null is'
+                                                                                                      then Nothing
+                                                                                                      else Just is'
+                                                                                         )
+                                                                                         (unIntKey $ toKey k)
+                                                                                         m'
+                                                     PrimaryIndex m' -> PrimaryIndex $ IS.delete i m'
                                                      BSTrieIndex m' -> BSTrieIndex $ BT.update
                                                                                          (\is-> let is' = IS.delete i is
                                                                                                 in if IS.null is'
@@ -315,6 +324,12 @@ updateUnsafe ix f query
                           , indicies = V.accum
                                          (foldl'
                                            (\m k-> case m of
+                                                     IntMapIndex m' -> IntMapIndex $ IM.insertWith
+                                                                                    IS.union
+                                                                                    (unIntKey $ toKey k)
+                                                                                    (IS.singleton i)
+                                                                                    m'
+                                                     PrimaryIndex m' -> PrimaryIndex $ IS.insert i m'
                                                      BSTrieIndex m' -> BSTrieIndex $ BT.insertWith
                                                                                      IS.union
                                                                                      (unBSKey $ toKey k)
@@ -325,6 +340,15 @@ updateUnsafe ix f query
                                          (V.accum
                                            (foldl'
                                              (\m k-> case m of
+                                                       IntMapIndex m' -> IntMapIndex $ IM.update
+                                                                                         (\is-> let is' = IS.delete i is
+                                                                                                in if IS.null is'
+                                                                                                      then Nothing
+                                                                                                      else Just is'
+                                                                                         )
+                                                                                         (unIntKey $ toKey k)
+                                                                                         m'
+                                                       PrimaryIndex m' -> PrimaryIndex $ IS.delete i m'
                                                        BSTrieIndex m' -> BSTrieIndex $ BT.update
                                                                                            (\is-> let is' = IS.delete i is
                                                                                                   in if IS.null is'
