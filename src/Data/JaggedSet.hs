@@ -17,12 +17,14 @@ import Control.Monad.Trans
 import Control.Monad.Reader
 import Prelude hiding (lookup)
 
-getByIds :: IM.IntMap a -> IS.IntSet -> IM.IntMap a
-getByIds im xs = IM.intersection im (fromSet xs)
-                 where  
-                    fromSet s = IM.fromAscList $ zip (IS.toAscList s) (repeat ())
 
 
+class Indexable a where
+    type IndexOf a
+    project     :: IndexOf a -> a -> Maybe [IndexOf a]
+
+class (Bounded a, Enum a) => IndexKey a where
+    toKey    :: a -> Key
 
 data Index  = BSTrieIndex { unTrieIndex :: !(BT.Trie IS.IntSet) }
             | PrimaryIndex { unPrimaryIndex :: !(IS.IntSet) }
@@ -31,17 +33,6 @@ data Index  = BSTrieIndex { unTrieIndex :: !(BT.Trie IS.IntSet) }
 data Key = IntKey { unIntKey :: Int } 
          | BSKey { unBSKey :: B.ByteString }
          | PrimaryKey {unPrimaryKey :: Int }
-
-class Indexable a where
-    type IndexOf a
-    project     :: IndexOf a -> a -> Maybe [IndexOf a]
-
-data Property = IdNumber
-              | FilterText
-
-class (Bounded a, Enum a) => IndexKey a where
-    toKey    :: a -> Key
-
 
 data JaggedSet a i = JaggedSet
                       { elements      :: !(IM.IntMap a)
@@ -69,12 +60,6 @@ data Selection k = Nothing'
                  | Submap k
                  | Union (Selection k) (Selection k)
                  | Intersection (Selection k) (Selection k)
-
-ix :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => JaggedSet a i -> i -> IS.IntSet
-ix s k = case toKey k of
-             BSKey _  -> IS.unions $ BT.elems $ unTrieIndex $ index k s
-             IntKey _  -> IS.unions $ IM.elems $ unIntMapIndex $ index k s
-             PrimaryKey _ -> unPrimaryIndex $ index k s
 
 resolve :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => Selection i
                                                                -> JaggedQuery a i (Selection i)
@@ -183,6 +168,9 @@ range :: (Indexable a, IndexKey i, IndexOf a ~ i) => Margin i
                                                -> Margin i 
                                                -> JaggedQuery a i (Selection i)
 range a b = return $ Range a b
+
+submap :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
+submap = return . Submap
 
 union :: JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i)
 union a b = a >>= \a'-> b >>= \b'-> (return $ Union a' b')
@@ -383,6 +371,17 @@ index :: (IndexKey i) => i -> JaggedSet a i -> Index
 index i s = (indicies s) V.! (fromEnum i)
 
 {-
+getByIds :: IM.IntMap a -> IS.IntSet -> IM.IntMap a
+getByIds im xs = IM.intersection im (fromSet xs)
+                 where  
+                    fromSet s = IM.fromAscList $ zip (IS.toAscList s) (repeat ())
+
+ix :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => JaggedSet a i -> i -> IS.IntSet
+ix s k = case toKey k of
+             BSKey _  -> IS.unions $ BT.elems $ unTrieIndex $ index k s
+             IntKey _  -> IS.unions $ IM.elems $ unIntMapIndex $ index k s
+             PrimaryKey _ -> unPrimaryIndex $ index k s
+
 (?=) :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedSet a i -> IM.IntMap a
 (?=) k d = case toKey k of
             BSKey _  -> maybe IM.empty
@@ -403,4 +402,4 @@ index i s = (indicies s) V.! (fromEnum i)
             BSKey _ -> getByIds (elements d) (ids k d)  
                        where
                         ids x s = IS.unions $ BT.elems $ BT.submap (unBSKey $ toKey x) (unTrieIndex $ index x s) 
--} 
+-}
