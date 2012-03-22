@@ -16,6 +16,7 @@ import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Reader
 import Prelude hiding (lookup)
+import Data.SafeCopy
 
 
 
@@ -40,6 +41,10 @@ data JaggedSet a i = JaggedSet
                       , indicies      :: !(V.Vector Index)
                       }
 
+instance (SafeCopy a, Indexable a, IndexKey i, IndexOf a ~ i) => SafeCopy (JaggedSet a i) where
+    putCopy = contain . safePut . toList
+    getCopy = contain $ fmap fromList safeGet
+
 type JaggedQuery e i a = Reader (JaggedSet e i) a
 
 data Margin a = Open a
@@ -58,6 +63,7 @@ data Selection k = Nothing'
                  | Everything
                  | Range (Margin k) (Margin k)
                  | Submap k
+                 | IndexItems k
                  | Union (Selection k) (Selection k)
                  | Intersection (Selection k) (Selection k)
 
@@ -123,6 +129,13 @@ resolve (Range a b)
                                 return $ if IS.null ind3 
                                            then Nothing'
                                            else  Set ind3
+resolve (IndexItems a)
+  = do ind <- index a <$> ask
+       case ind of
+        BSTrieIndex ind1 -> return $ Set $ IS.unions (BT.elems ind1)
+        IntMapIndex ind1 -> return $ Set $ IS.unions (IM.elems ind1)
+        PrimaryIndex ind1 -> return $ Set ind1
+                                    
 resolve (Submap a)
   = do ind <- index a <$> ask
        case ind of
@@ -169,11 +182,17 @@ range :: (Indexable a, IndexKey i, IndexOf a ~ i) => Margin i
                                                -> JaggedQuery a i (Selection i)
 range a b = return $ Range a b
 
+only :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
+only i = return $ IndexItems i 
+
 submap :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
 submap = return . Submap
 
 union :: JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i)
 union a b = a >>= \a'-> b >>= \b'-> (return $ Union a' b')
+
+(>/<) = intersection
+(>+<) = union
 
 intersection :: JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i)
 intersection a b = a >>= \a'-> b >>= \b'-> (return $ Intersection a' b')
