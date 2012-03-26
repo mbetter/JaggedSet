@@ -45,12 +45,15 @@ instance Enum   StereoidKey where
 
 
 instance IndexKey StereoidKey where
+    -- do we leave this partial or add all of the tedious boilerplate?
     toKey (AlbumTitle x)      = BSKey $ E.encodeUtf8 x
     toKey (AlbumSortTitle x)  = BSKey $ E.encodeUtf8 x
     toKey (AlbumArtist x)     = BSKey $ E.encodeUtf8 x
     toKey (AlbumId x)         = PrimaryKey x
     toKey (SongId x)          = PrimaryKey x
     toKey (AlbumSortArtist x) = BSKey $ E.encodeUtf8 x
+    fromKey (AlbumId _) (PrimaryKey x) = AlbumId x
+    fromKey (SongId _) (PrimaryKey x)  = SongId x
 
 data SdbRecord = Album
                     { _id :: Int
@@ -72,7 +75,10 @@ data SdbRecord = Album
                     }
             deriving (Eq, Ord, Data, Typeable)
 
-
+{-
+testli = fromList [
+                  Album 1 "Hi guise" "asdasd" "qew" "sdfdsf" [] [] 1999 123456
+-}
 data Art = Art
           { _mime :: B.ByteString
           , _file :: String

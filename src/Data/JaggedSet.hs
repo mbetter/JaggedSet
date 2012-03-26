@@ -36,8 +36,9 @@ class Indexable a where
 
 -- IndexKey brings in our constraints and a way to map keys to indexable
 -- keys (Key)
-class (Typeable a, Bounded a, Enum a) => IndexKey a where
+class (Bounded a, Enum a) => IndexKey a where
     toKey    :: a -> Key
+    fromKey  :: a -> Key -> a
 
 data Index  = BSTrieIndex { unTrieIndex :: !(BT.Trie IS.IntSet) }
             | PrimaryIndex { unPrimaryIndex :: !(IS.IntSet) }
@@ -294,14 +295,11 @@ insert x s = s { elements = IM.insert key (elem x key) (elements s)
              where
                 key = succ $ maxKey s
                 -- if any of the indexes is a PrimaryKey, we need to update the element to reflect the actual index of
-                -- the element in the IntMap. this requires casting the int key to the PrimaryKey IndexKey, requiring
-                -- Typeable.
+                -- the element in the IntMap. this requires a way to get back to an actual key from a Key, hence 'fromKey'.
                 elem e k = foldl (\x y -> case toKey y of
-                                           PrimaryKey _ -> case cast k of
+                                           PrimaryKey _ -> case reflect (fromKey y (PrimaryKey key)) x of
                                                                Nothing -> x
-                                                               Just key -> case reflect key x of
-                                                                               Nothing -> x
-                                                                               Just x' -> x'
+                                                               Just x' -> x'
                                            _            -> x
                               )
                               e
