@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, MultiParamTypeClasses, RecordWildCards, TemplateHaskell, OverloadedStrings, TypeFamilies, FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances, DeriveDataTypeable, ScopedTypeVariables, MultiParamTypeClasses, RecordWildCards, TemplateHaskell, OverloadedStrings, TypeFamilies, FlexibleInstances #-}
 
 module Data.JaggedSet where
 
@@ -10,6 +10,7 @@ import qualified Data.IntSet as IS
 import qualified Data.Vector as V
 import qualified Data.Trie as BT 
 import qualified Data.Trie.Convenience as BT
+import Data.Typeable
 import Data.List (foldl')
 import Control.Applicative hiding (empty)
 import Control.Monad
@@ -19,12 +20,23 @@ import Prelude hiding (lookup)
 import Data.SafeCopy
 
 
-
+-- Indexable is the typeclass that links our data type (a) to our key
+-- type (IndexOf a).
 class Indexable a where
     type IndexOf a
+    
+    -- project takes a key and an item, returns the field in the item
+    -- corresponds to the key if the key 9s related, Nothing otherwise.
     project     :: IndexOf a -> a -> Maybe [IndexOf a]
+    
+    -- reflect takes a key and an item and returns the item updated to
+    -- the new key. This returns Maybe a only because the update function
+    -- wants it that way, should be changed.
+    reflect     :: IndexOf a -> a -> Maybe a
 
-class (Bounded a, Enum a) => IndexKey a where
+-- IndexKey brings in our constraints and a way to map keys to indexable
+-- keys (Key)
+class (Typeable a, Bounded a, Enum a) => IndexKey a where
     toKey    :: a -> Key
 
 data Index  = BSTrieIndex { unTrieIndex :: !(BT.Trie IS.IntSet) }
@@ -39,11 +51,7 @@ data JaggedSet a i = JaggedSet
                       { elements      :: !(IM.IntMap a)
                       , maxKey        :: !Int
                       , indicies      :: !(V.Vector Index)
-                      }
-
-instance (SafeCopy a, Indexable a, IndexKey i, IndexOf a ~ i) => SafeCopy (JaggedSet a i) where
-    putCopy = contain . safePut . toList
-    getCopy = contain $ fmap fromList safeGet
+                      } deriving (Typeable)
 
 type JaggedQuery e i a = Reader (JaggedSet e i) a
 
@@ -66,6 +74,10 @@ data Selection k = Nothing'
                  | IndexItems k
                  | Union (Selection k) (Selection k)
                  | Intersection (Selection k) (Selection k)
+                 deriving (Typeable)
+
+$(deriveSafeCopy 0 'base ''Margin)
+$(deriveSafeCopy 0 'base ''Selection)
 
 resolve :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => Selection i
                                                                -> JaggedQuery a i (Selection i)
@@ -185,8 +197,8 @@ range a b = return $ Range a b
 only :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
 only i = return $ IndexItems i 
 
-submap :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
-submap = return . Submap
+like :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i)
+like = return . Submap
 
 union :: JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i) -> JaggedQuery a i (Selection i)
 union a b = a >>= \a'-> b >>= \b'-> (return $ Union a' b')
@@ -215,6 +227,9 @@ queryList q s = case runReader (q >>= resolve) s of
                                         (IS.toList is)
                      Everything -> toList s
 
+queryToSelection :: (Indexable a, IndexKey i, IndexOf a ~ i) => JaggedQuery a i (Selection i) -> JaggedSet a i -> Selection i
+queryToSelection q s = runReader (q >>= resolve) s
+
 lookup :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedSet a i -> Maybe a
 lookup i s = case queryList (equals i) s of
                         [] -> Nothing
@@ -234,10 +249,11 @@ empty = JaggedSet
           { elements = IM.empty
           , maxKey = minBound
           , indicies = V.fromList (map 
+                                    -- the result of toKey will determine the constructor of Index we use.
                                     (\x -> case toKey x of
-                                            IntKey k     -> IntMapIndex IM.empty
-                                            BSKey k      -> BSTrieIndex BT.empty
-                                            PrimaryKey k -> PrimaryIndex IS.empty )
+                                            IntKey _     -> IntMapIndex IM.empty
+                                            BSKey _      -> BSTrieIndex BT.empty
+                                            PrimaryKey _ -> PrimaryIndex IS.empty )
                                      ([minBound..maxBound] :: [i])
                                     )
           }
@@ -246,7 +262,7 @@ size :: JaggedSet a i -> Int
 size = IM.size . elements
 
 insert :: forall a i.(Indexable a, IndexKey i, IndexOf a ~ i) => a -> JaggedSet a i -> JaggedSet a i
-insert x s = s { elements = IM.insert key x (elements s)
+insert x s = s { elements = IM.insert key (elem x key) (elements s)
                , maxKey   = key
                , indicies = V.accum
                               (foldl'
@@ -269,6 +285,7 @@ insert x s = s { elements = IM.insert key x (elements s)
 
                               (indicies s)
                               
+                              -- if a key projects to Nothing, we don't need to update the index.
                               (mapMaybe (\c ->
                                 (fmap . (,)) (fromEnum c) (project c x))
                                 [minBound..maxBound :: i]
@@ -276,10 +293,31 @@ insert x s = s { elements = IM.insert key x (elements s)
                }
              where
                 key = succ $ maxKey s
+                -- if any of the indexes is a PrimaryKey, we need to update the element to reflect the actual index of
+                -- the element in the IntMap. this requires casting the int key to the PrimaryKey IndexKey, requiring
+                -- Typeable.
+                elem e k = foldl (\x y -> case toKey y of
+                                           PrimaryKey _ -> case cast k of
+                                                               Nothing -> x
+                                                               Just key -> case reflect key x of
+                                                                               Nothing -> x
+                                                                               Just x' -> x'
+                                           _            -> x
+                              )
+                              e
+                              [minBound..maxBound :: i]
+
 
 delete :: (Indexable a, IndexKey i, IndexOf a ~ i) => JaggedQuery a i (Selection i) -> JaggedSet a i -> JaggedSet a i
 delete = update (const Nothing)
                        
+
+updateField :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i) -> JaggedSet a i -> JaggedSet a i
+updateField i = update (reflect i)
+
+updateFieldUnsafe :: (Indexable a, IndexKey i, IndexOf a ~ i) => i -> JaggedQuery a i (Selection i) -> JaggedSet a i -> JaggedSet a i
+updateFieldUnsafe i = updateUnsafe [i] (reflect i)
+
 update :: (Indexable a, IndexKey i, IndexOf a ~ i) => (a -> Maybe a) -> JaggedQuery a i (Selection i) -> JaggedSet a i -> JaggedSet a i
 update = updateUnsafe [minBound..maxBound]
 
@@ -389,6 +427,23 @@ fromList = foldl' (flip insert) empty
 index :: (IndexKey i) => i -> JaggedSet a i -> Index
 index i s = (indicies s) V.! (fromEnum i)
 
+instance (SafeCopy a, Indexable a, IndexKey i, IndexOf a ~ i) => SafeCopy (JaggedSet a i) where
+    putCopy = contain . safePut . toList
+    getCopy = contain $ fmap fromList safeGet
+
+{-
+instance (SafeCopy a, Indexable a, IndexKey i, IndexOf a ~ i) => SafeCopy (JaggedQuery a i (Selection i))  where
+    putCopy = contain . safePut . queryToSelection
+    getCopy = contain $ fmap queryToSelection safeGet
+    -}
+
+rawQuery :: (Indexable a, IndexKey i, IndexOf a ~ i) => Selection i -> JaggedSet a i -> [a]
+rawQuery q s = case q of
+                     Nothing' -> []
+                     Set is -> map
+                                        (\i-> fromMaybe (error "corrupted JaggedSet (error 2b)") $ IM.lookup i (elements s))
+                                        (IS.toList is)
+                     Everything -> toList s
 {-
 getByIds :: IM.IntMap a -> IS.IntSet -> IM.IntMap a
 getByIds im xs = IM.intersection im (fromSet xs)

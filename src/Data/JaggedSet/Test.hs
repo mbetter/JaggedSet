@@ -12,16 +12,18 @@ import Data.Data (Data, Typeable)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
 import Data.Acid
+import Data.Aeson
 import Data.Acid.Advanced
-import qualified Data.Vector as V
 import Data.SafeCopy
+import Control.Monad.State (MonadIO)
+import Control.Monad.Reader (ask)
 
 data StereoidKey = AlbumTitle Text
                  | AlbumSortTitle Text
                  | AlbumArtist Text
                  | AlbumId Int
                  | SongId Int
-                 | AlbumSortArtist Text
+                 | AlbumSortArtist Text deriving (Typeable)
 
 instance Bounded StereoidKey where
     minBound    = AlbumTitle undefined
@@ -78,10 +80,11 @@ data Art = Art
           }
           deriving (Eq, Ord, Data, Typeable)
 
-data Sdb = Sdb (JaggedSet SdbRecord StereoidKey) deriving (Typeable)
+data Sdb = Sdb { _sdb :: JaggedSet SdbRecord StereoidKey } deriving (Typeable)
 
 $(makeLens ''SdbRecord)
 $(makeLens ''Art)
+$(makeLens ''Sdb)
 
 instance Indexable SdbRecord where
     type IndexOf SdbRecord = StereoidKey
@@ -99,6 +102,19 @@ instance Indexable SdbRecord where
     project (SongId _)          x@(Song {}) = Just [SongId (songid ^$ x)]
     project (AlbumSortArtist _) x@(Song {}) = Just [AlbumSortArtist (songSortArtist ^$ x)]
 
+    reflect (AlbumTitle y) x@(Song {}) = Just (songAlbumTitle ^= y $ x)
+    reflect (AlbumSortTitle y) x@(Song {}) = Just (songAlbumSortTitle ^= y $ x)
+    reflect (AlbumArtist y) x@(Song {}) = Just (songArtist ^= y $ x)
+    reflect (AlbumId y) x@(Song {}) = Just x
+    reflect (SongId y) x@(Song {}) = Just (songid ^= y $ x)
+    reflect (AlbumSortArtist y) x@(Song {}) = Just (songSortArtist ^= y $ x)
+
+    reflect (AlbumTitle y) x@(Album {}) = Just (title ^= y $ x)
+    reflect (AlbumSortTitle y) x@(Album {}) = Just (sortTitle ^= y $ x)
+    reflect (AlbumArtist y) x@(Album {}) = Just (artist ^= y $ x)
+    reflect (AlbumId y) x@(Album {}) = Just (id ^= y $ x)
+    reflect (SongId y) x@(Album {}) = Just x
+    reflect (AlbumSortArtist y) x@(Album {}) = Just (sortArtist ^= y $ x)
 
 $(deriveSafeCopy 0 'base ''Art)
 $(deriveSafeCopy 0 'base ''SdbRecord)
@@ -114,8 +130,15 @@ songs :: StereoidKey
 songs = SongId undefined
 
 testQ :: StereoidKey -> [SdbRecord]
-testQ k = queryList (only albums >/< submap k) testDb
+testQ k = queryList (only albums >/< like k) testDb
 
+getSdb :: Query Sdb (JaggedSet SdbRecord StereoidKey)
+getSdb = do db <- ask
+            return $ _sdb db
 
+$(makeAcidic ''Sdb ['getSdb])
 
+runQuery :: (Monad m, MonadIO m) => AcidState Sdb -> JaggedQuery SdbRecord StereoidKey (Selection StereoidKey) -> m [SdbRecord]
+runQuery acid q = do db <- query' acid (GetSdb)
+                     return $ queryList q db
 
