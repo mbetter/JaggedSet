@@ -38,12 +38,18 @@ class Indexable a where
 -- keys (Key)
 class (Bounded a, Enum a) => IndexKey a where
     toKey    :: a -> Key
+    --
+    -- fromKey is only used (right now) to turn an Int into whatever
+    -- constructor PrimaryKey. i don't really like this, but there's no
+    -- reason that some IndexKey constructor can't have something that's
+    -- not an Int in it.
     fromKey  :: a -> Key -> a
 
 data Index  = BSTrieIndex { unTrieIndex :: !(BT.Trie IS.IntSet) }
             | PrimaryIndex { unPrimaryIndex :: !(IS.IntSet) }
             | IntMapIndex { unIntMapIndex :: !(IM.IntMap IS.IntSet) }
             
+-- Key constructors correspond to Index constructors.
 data Key = IntKey { unIntKey :: Int } 
          | BSKey { unBSKey :: B.ByteString }
          | PrimaryKey {unPrimaryKey :: Int }
@@ -52,7 +58,8 @@ data JaggedSet a i = JaggedSet
                       { elements      :: !(IM.IntMap a)
                       , maxKey        :: !Int
                       , indicies      :: !(V.Vector Index)
-                      } deriving (Typeable)
+                      } deriving (Typeable) -- should move Typeable derivation to acid-specific
+                                            -- module eventually.   
 
 type JaggedQuery e i a = Reader (JaggedSet e i) a
 
